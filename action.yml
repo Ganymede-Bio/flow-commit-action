@@ -73,21 +73,17 @@ runs:
 
         echo "$FILE_MAP" > file_map.json
         echo "File map created"  
-        echo "${{ steps.changed-files.outputs.ENV_CHANGED_FILES }}"
-        cat file_map.json
 
     - name: Send to API
       shell: bash
       run: |
         # Create the payload with file map and commit details
-
+          echo ${{ inputs.AUTHOR_EMAIL }}"
           payload=$(jq -n \
           --slurpfile fileMap file_map.json \
           --arg authorEmail "${{ github.event.head_commit.author.email || inputs.AUTHOR_EMAIL }}" \
           --arg message "${{ github.event.head_commit.message || 'Automated commit'}}" \
           '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}')
-
-          echo $payload
           
           # Make the API request with the file map and capture both status code and response body
           response_file=$(mktemp)
