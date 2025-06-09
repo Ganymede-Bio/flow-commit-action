@@ -9,6 +9,7 @@ inputs:
     required: true
   GANYMEDE_API_TOKEN:
     description: 'API token for authenticating with Ganymede'
+    required: true
   AUTHOR_EMAIL:
     description: 'Email of the author for the commit. Required for workflow_dispatch events.'
     required: false
@@ -78,7 +79,6 @@ runs:
       shell: bash
       run: |
         # Create the payload with file map and commit details
-          echo "${{ inputs.AUTHOR_EMAIL }}"
           payload=$(jq -n \
           --slurpfile fileMap file_map.json \
           --arg authorEmail "${{ github.event.head_commit.author.email || inputs.AUTHOR_EMAIL }}" \
