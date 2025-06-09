@@ -78,7 +78,7 @@ runs:
       shell: bash
       run: |
         # Create the payload with file map and commit details
-          echo ${{ inputs.AUTHOR_EMAIL }}"
+          echo "${{ inputs.AUTHOR_EMAIL }}"
           payload=$(jq -n \
           --slurpfile fileMap file_map.json \
           --arg authorEmail "${{ github.event.head_commit.author.email || inputs.AUTHOR_EMAIL }}" \
