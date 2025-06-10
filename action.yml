@@ -47,12 +47,12 @@ runs:
           else 
             echo "No changes detected in ${{ inputs.ENVIRONMENT }} directory."
             echo "ENV_CHANGED_FILES=" >> $GITHUB_OUTPUT
-            exit 0
         fi
         
 
     - name: Prepare file map with base64 encoding
       id: prepare-file-map
+      if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
       shell: bash
       run: |
         echo "Building file map for ${{ inputs.ENVIRONMENT }} environment."
@@ -79,6 +79,7 @@ runs:
 
     - name: Send to API
       shell: bash
+      if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
       run: |
         # Create the payload with file map and commit details
           payload=$(jq -n \
