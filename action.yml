@@ -1,16 +1,16 @@
 name: 'Flow Commit Action'
 description: 'Commit flow code changes to Ganymede'
 inputs:
-  ENVIRONMENT:
+  environment:
     description: 'The directory of the environment to commit. It must match the ganymede environment name.'
     required: true
-  GANYMEDE_SUBDOMAIN:
+  ganymede_subdomain:
     description: 'The Ganymede subdomain where the environment is located.'
     required: true
-  GANYMEDE_API_TOKEN:
+  ganymede_api_token:
     description: 'API token for authenticating with Ganymede'
     required: true
-  AUTHOR_EMAIL:
+  author_email:
     description: 'Email of the author for the commit. Required for workflow_dispatch events.'
     required: false
 outputs:
@@ -30,22 +30,22 @@ runs:
       shell: bash
       run: |
         # Check for changes in each environment directory
-        echo "Checking changes in ${{ inputs.ENVIRONMENT }} directory..."
+        echo "Checking changes in ${{ inputs.environment }} directory..."
         # Get changed files in this environment directory
           
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # For workflow dispatch, get all files in environment
-            ENV_CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- "${{ inputs.ENVIRONMENT }}/" | grep -v '^$' || echo "")
+            ENV_CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
           else
             # For push events, compare before and after commit
-            ENV_CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- "${{ inputs.ENVIRONMENT }}/" | grep -v '^$' || echo "")
+            ENV_CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
           fi
 
         if [ -n "$ENV_CHANGED_FILES" ]; then
-            echo "Changed files in ${{ inputs.ENVIRONMENT }} directory: $ENV_CHANGED_FILES"
+            echo "Changed files in ${{ inputs.environment }} directory: $ENV_CHANGED_FILES"
             echo "ENV_CHANGED_FILES=$ENV_CHANGED_FILES" >> $GITHUB_OUTPUT
           else 
-            echo "No changes detected in ${{ inputs.ENVIRONMENT }} directory."
+            echo "No changes detected in ${{ inputs.environment }} directory."
             echo "ENV_CHANGED_FILES=" >> $GITHUB_OUTPUT
         fi
         
@@ -55,7 +55,7 @@ runs:
       if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
       shell: bash
       run: |
-        echo "Building file map for ${{ inputs.ENVIRONMENT }} environment."
+        echo "Building file map for ${{ inputs.environment }} environment."
         
         FILE_MAP="{}"
 
@@ -66,7 +66,7 @@ runs:
             CONTENT=$(base64 -i "$file" | tr -d '\n')
 
             # Remove the environment prefix
-            TRIMMED_FILENAME=$(echo "$file" | sed "s|^${{ inputs.ENVIRONMENT }}/||")
+            TRIMMED_FILENAME=$(echo "$file" | sed "s|^${{ inputs.environment }}/||")
 
             # Safely add to the JSON object using jq
             FILE_MAP=$(jq --arg key "$TRIMMED_FILENAME" --arg val "$CONTENT" \
@@ -84,7 +84,7 @@ runs:
         # Create the payload with file map and commit details
           payload=$(jq -n \
           --slurpfile fileMap file_map.json \
-          --arg authorEmail "${{ github.event.head_commit.author.email || inputs.AUTHOR_EMAIL }}" \
+          --arg authorEmail "${{ github.event.head_commit.author.email || inputs.author_email }}" \
           --arg message "${{ github.event.head_commit.message || 'Automated commit'}}" \
           '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}')
           
@@ -92,9 +92,9 @@ runs:
           response_file=$(mktemp)
           response_code=$(curl -X PUT \
               -H "Content-Type: application/json" \
-              -H "api-key: ${{ inputs.GANYMEDE_API_TOKEN }}" \
+              -H "api-key: ${{ inputs.ganymede_api_token }}" \
               -d "$payload" \
-              https://${{ inputs.GANYMEDE_SUBDOMAIN }}.ganymede.bio/v0/environment/${{ inputs.ENVIRONMENT }}/commits \
+              https://${{ inputs.ganymede_subdomain }}.ganymede.bio/v0/environment/${{ inputs.environment }}/commits \
               -w "%{http_code}" -o "$response_file")
           
           if [[ "$response_code" != 2* ]]; then
