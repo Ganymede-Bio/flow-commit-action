@@ -1,0 +1,108 @@
+name: 'Flow Commit Action'
+description: 'Commit flow code changes to Ganymede'
+inputs:
+  environment:
+    description: 'The environment to commit flow code to.'
+    required: true
+  ganymede_subdomain:
+    description: 'The Ganymede subdomain where the environment is located.'
+    required: true
+  ganymede_api_token:
+    description: 'API token for authenticating with Ganymede'
+    required: true
+  author_email:
+    description: 'Email of the author for the commit. Required for workflow_dispatch events.'
+    required: false
+outputs:
+  files-committed:  
+    description: "Files comitted to Ganymede"
+    value: ${{ steps.changed-files.outputs.ENV_CHANGED_FILES }}
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # To be able to get the changes between the last two commits
+
+    - name: Get changed files
+      id: changed-files
+      shell: bash
+      run: |
+        # Check for changes in each environment directory
+        echo "Checking changes in ${{ inputs.environment }} directory..."
+        # Get changed files in this environment directory
+          
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # For workflow dispatch, get all files in environment
+            ENV_CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+          else
+            # For push events, compare before and after commit
+            ENV_CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+          fi
+
+        if [ -n "$ENV_CHANGED_FILES" ]; then
+            echo "Changed files in ${{ inputs.environment }} directory: $ENV_CHANGED_FILES"
+            echo "ENV_CHANGED_FILES=$ENV_CHANGED_FILES" >> $GITHUB_OUTPUT
+          else 
+            echo "No changes detected in ${{ inputs.environment }} directory."
+            echo "ENV_CHANGED_FILES=" >> $GITHUB_OUTPUT
+        fi
+        
+
+    - name: Prepare file map with base64 encoding
+      id: prepare-file-map
+      if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
+      shell: bash
+      run: |
+        echo "Building file map for ${{ inputs.environment }} environment."
+        
+        FILE_MAP="{}"
+
+        readarray -t files <<< "${{ steps.changed-files.outputs.ENV_CHANGED_FILES }}"
+        for file in "${files[@]}"; do
+            if [ -f "$file" ]; then
+            # Read base64-encoded content
+            CONTENT=$(base64 -i "$file" | tr -d '\n')
+
+            # Remove the environment prefix
+            TRIMMED_FILENAME=$(echo "$file" | sed "s|^${{ inputs.environment }}/||")
+
+            # Safely add to the JSON object using jq
+            FILE_MAP=$(jq --arg key "$TRIMMED_FILENAME" --arg val "$CONTENT" \
+                '. + {($key): $val}' <<< "$FILE_MAP")
+            fi
+        done
+
+        echo "$FILE_MAP" > file_map.json
+        echo "File map created"  
+
+    - name: Send to API
+      shell: bash
+      if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
+      run: |
+        # Create the payload with file map and commit details
+          payload=$(jq -n \
+          --slurpfile fileMap file_map.json \
+          --arg authorEmail "${{ github.event.head_commit.author.email || inputs.author_email }}" \
+          --arg message "${{ github.event.head_commit.message || 'Automated commit'}}" \
+          '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}')
+          
+          # Make the API request with the file map and capture both status code and response body
+          response_file=$(mktemp)
+          response_code=$(curl -X PUT \
+              -H "Content-Type: application/json" \
+              -H "api-key: ${{ inputs.ganymede_api_token }}" \
+              -d "$payload" \
+              https://${{ inputs.ganymede_subdomain }}.ganymede.bio/v0/environment/${{ inputs.environment }}/commits \
+              -w "%{http_code}" -o "$response_file")
+          
+          if [[ "$response_code" != 2* ]]; then
+              echo "Request failed with response code $response_code"
+              echo "Error response body:"
+              cat "$response_file"
+              rm "$response_file"
+              exit 1
+          fi
+          
+          rm "$response_file"
