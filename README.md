@@ -2,6 +2,8 @@
 
 GitHub Action for committing flow code changes to your Ganymede environments.
 
+This action is used as part of Ganymede's Self-Managed Repo feature. Self-managed repos allow you to host and manage your Ganymede flow code in your organization, giving you greater control over version control, CI/CD, and code governance. For more information on setting up self-managed repos, please see the [official documentation](https://docs.ganymede.bio/app/configuration/SelfManagedRepo).
+
 ## Description
 
 This action automates the process of detecting changes in your Ganymede environment directories and committing those changes to the corresponding Ganymede environment. It handles file change detection, base64 encoding, and API communication with Ganymede. If using this action in a push event then the committer email address is used in the API request. This must make an email address of an existing Ganymede user. if using this action in a workflow dispatch than an author_email must be set in the action.
