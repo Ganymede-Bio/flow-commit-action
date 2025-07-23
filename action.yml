@@ -46,7 +46,14 @@ runs:
 
         if [ -n "$ENV_CHANGED_FILES" ]; then
             echo "Changed files in ${{ inputs.environment }} directory: $ENV_CHANGED_FILES"
-            echo "ENV_CHANGED_FILES=$ENV_CHANGED_FILES" >> $GITHUB_OUTPUT
+            # Use heredoc syntax to preserve newlines in GitHub Actions output
+            # This ensures git diff's newline-separated file list remains intact
+            # so readarray can properly split files in the next step
+            {
+              echo "ENV_CHANGED_FILES<<EOF"
+              echo "$ENV_CHANGED_FILES"
+              echo "EOF"
+            } >> $GITHUB_OUTPUT
           else 
             echo "No changes detected in ${{ inputs.environment }} directory."
             echo "ENV_CHANGED_FILES=" >> $GITHUB_OUTPUT
