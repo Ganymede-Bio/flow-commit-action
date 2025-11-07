@@ -24,7 +24,7 @@ runs:
   using: "composite"
   steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v5
       with:
         fetch-depth: 0  # To be able to get the changes between the last two commits
 
@@ -37,8 +37,8 @@ runs:
         # Get changed files in this environment directory
           
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # For workflow dispatch, get all files in environment
-            ENV_CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+            # For workflow dispatch, deploy all files in environment to sync with Ganymede
+            ENV_CHANGED_FILES=$(git ls-files "${{ inputs.environment }}/" | grep -v '^$' || echo "")
           else
             # For push events, compare before and after commit
             ENV_CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
