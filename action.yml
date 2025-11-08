@@ -92,27 +92,29 @@ runs:
       if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
       run: |
         # Create the payload with file map and commit details
-          payload=$(jq -n \
+          jq -n \
           --slurpfile fileMap file_map.json \
           --arg authorEmail "${{ github.event.head_commit.author.email || inputs.author_email }}" \
           --arg message "${{ github.event.head_commit.message || 'Automated commit'}}" \
-          '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}')
-          
+          '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}' > payload.json
+
           # Make the API request with the file map and capture both status code and response body
           response_file=$(mktemp)
           response_code=$(curl -X PUT \
               -H "Content-Type: application/json" \
               -H "api-key: ${{ inputs.ganymede_api_token }}" \
-              -d "$payload" \
+              -d @payload.json \
               https://${{ inputs.ganymede_subdomain }}.ganymede.bio/v0/environment/${{ inputs.ganymede_environment }}/commits \
               -w "%{http_code}" -o "$response_file")
-          
+
           if [[ "$response_code" != 2* ]]; then
               echo "Request failed with response code $response_code"
               echo "Error response body:"
               cat "$response_file"
               rm "$response_file"
+              rm payload.json
               exit 1
           fi
-          
+
           rm "$response_file"
+          rm payload.json
