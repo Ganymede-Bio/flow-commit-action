@@ -37,8 +37,16 @@ runs:
         # Get changed files in this environment directory
           
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # For workflow dispatch, deploy all files in environment to sync with Ganymede
-            ENV_CHANGED_FILES=$(git ls-files "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+            # Find the most recent sync commit from Ganymede
+            LAST_SYNC_COMMIT=$(git log --grep="Sync flows in environment" --format="%H" -1 || echo "")
+
+            if [ -n "$LAST_SYNC_COMMIT" ]; then
+                # Deploy only files changed since last Ganymede sync
+                ENV_CHANGED_FILES=$(git diff --name-only "$LAST_SYNC_COMMIT" HEAD -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+            else
+                # Fallback: if no sync commit found, deploy all files (first deployment)
+                ENV_CHANGED_FILES=$(git ls-files "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+            fi
           else
             # For push events, compare before and after commit
             ENV_CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
@@ -92,27 +100,29 @@ runs:
       if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
       run: |
         # Create the payload with file map and commit details
-          payload=$(jq -n \
+          jq -n \
           --slurpfile fileMap file_map.json \
           --arg authorEmail "${{ github.event.head_commit.author.email || inputs.author_email }}" \
           --arg message "${{ github.event.head_commit.message || 'Automated commit'}}" \
-          '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}')
-          
+          '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}' > payload.json
+
           # Make the API request with the file map and capture both status code and response body
           response_file=$(mktemp)
           response_code=$(curl -X PUT \
               -H "Content-Type: application/json" \
               -H "api-key: ${{ inputs.ganymede_api_token }}" \
-              -d "$payload" \
+              -d @payload.json \
               https://${{ inputs.ganymede_subdomain }}.ganymede.bio/v0/environment/${{ inputs.ganymede_environment }}/commits \
               -w "%{http_code}" -o "$response_file")
-          
+
           if [[ "$response_code" != 2* ]]; then
               echo "Request failed with response code $response_code"
               echo "Error response body:"
               cat "$response_file"
               rm "$response_file"
+              rm payload.json
               exit 1
           fi
-          
+
           rm "$response_file"
+          rm payload.json
