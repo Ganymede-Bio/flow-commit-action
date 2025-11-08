@@ -17,8 +17,8 @@ inputs:
     description: 'Email of the author for the commit. Required for workflow_dispatch events.'
     required: false
 outputs:
-  files-committed:  
-    description: "Files comitted to Ganymede"
+  files-committed:
+    description: "Files committed to Ganymede"
     value: ${{ steps.changed-files.outputs.ENV_CHANGED_FILES }}
 runs:
   using: "composite"

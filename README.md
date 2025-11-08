@@ -12,7 +12,8 @@ This action automates the process of detecting changes in your Ganymede environm
 
 | Input | Description | Required |
 |-------|-------------|----------|
-| `environment` | The environment to commit flow code to. This value is shown in the URL. For example, if your Ganymede homepage has the URL https://mycompany.ganymede.bio/mycompany-dev/home, you would use mycompany-dev | Yes |
+| `environment` | The environment name to retrieve flow code from. This corresponds to the directory name in your repository (e.g., dev, prod). | Yes |
+| `ganymede_environment` | The Ganymede environment to deploy to. This value is shown in the URL. For example, if your Ganymede homepage has the URL https://mycompany.ganymede.bio/mycompany-dev/home, you would use mycompany-dev. Typically configured as a GitHub environment variable. | Yes |
 | `ganymede_subdomain` | The Ganymede subdomain where the environment is located. If your Ganymede URL is mycompany.ganymede.bio, this would be mycompany | Yes |
 | `ganymede_api_token` | API token for authenticating with Ganymede. | Yes |
 | `author_email` | Email of the author for the commit. Required for workflow_dispatch events. | No |
@@ -25,6 +26,10 @@ This action automates the process of detecting changes in your Ganymede environm
 
 ## Usage
 
+For information on setting up the required GitHub variables and secrets (`GANYMEDE_ENVIRONMENT`, `GANYMEDE_SUBDOMAIN`, `GANYMEDE_API_TOKEN`), please see the [Self-Managed Repository documentation](https://docs.ganymede.bio/app/configuration/SelfManagedRepo).
+
+For a complete working example, see the [self-managed-example repository](https://github.com/Ganymede-Bio/self-managed-example).
+
 The action in your repo would look like this:
 
 ```yaml
@@ -33,16 +38,29 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to publish flows into'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      authorEmail:
+        description: 'Email of the author for the commit'
+        required: true
 
 jobs:
   commit-flow-changes:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
     steps:
       - name: Commit flow changes to Ganymede
         uses: ganymede/flow-commit-action@v1
         with:
-          environment: 'my-environment'
-          ganymede_subdomain: 'my-subdomain'
+          environment: ${{ inputs.environment || 'dev' }}
+          ganymede_environment: ${{ vars.GANYMEDE_ENVIRONMENT }}
+          ganymede_subdomain: ${{ vars.GANYMEDE_SUBDOMAIN }}
           ganymede_api_token: ${{ secrets.GANYMEDE_API_TOKEN }}
-          author_email: my-email
+          author_email: ${{ inputs.authorEmail }}
 ```
