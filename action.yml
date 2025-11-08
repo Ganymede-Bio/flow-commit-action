@@ -37,8 +37,16 @@ runs:
         # Get changed files in this environment directory
           
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # For workflow dispatch, deploy all files in environment to sync with Ganymede
-            ENV_CHANGED_FILES=$(git ls-files "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+            # Find the most recent sync commit from Ganymede
+            LAST_SYNC_COMMIT=$(git log --grep="Sync flows in environment" --format="%H" -1 || echo "")
+
+            if [ -n "$LAST_SYNC_COMMIT" ]; then
+                # Deploy only files changed since last Ganymede sync
+                ENV_CHANGED_FILES=$(git diff --name-only "$LAST_SYNC_COMMIT" HEAD -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+            else
+                # Fallback: if no sync commit found, deploy all files (first deployment)
+                ENV_CHANGED_FILES=$(git ls-files "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+            fi
           else
             # For push events, compare before and after commit
             ENV_CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
