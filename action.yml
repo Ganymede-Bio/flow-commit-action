@@ -106,6 +106,13 @@ runs:
       shell: bash
       if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
       run: |
+        # Fail loudly if base_sha was not wired up — GitHub does not enforce
+        # required:true for composite action inputs at runtime.
+          if [ -z "${{ inputs.base_sha }}" ]; then
+            echo "Error: base_sha is required. Pass the head_sha output from flow-pull-action."
+            exit 1
+          fi
+
         # Create the payload with file map, commit details, and baseSha for conflict detection
           jq -n \
             --slurpfile fileMap file_map.json \
