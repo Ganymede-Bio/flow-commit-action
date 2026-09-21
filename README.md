@@ -8,6 +8,10 @@ This action is used as part of Ganymede's Self-Managed Repo feature. Self-manage
 
 This action automates the process of detecting changes in your Ganymede environment directories and committing those changes to the corresponding Ganymede environment. It handles file change detection, base64 encoding, and API communication with Ganymede. If using this action in a push event then the committer email address is used in the API request. This must make an email address of an existing Ganymede user. if using this action in a workflow dispatch than an author_email must be set in the action.
 
+## Requirements
+
+The runner must have `curl`, `base64`, and `jq` available. GitHub-hosted Ubuntu runners include these by default; on a minimal self-hosted runner, install `jq` (e.g. `apt-get install -y jq`) before using this action.
+
 ## Inputs
 
 | Input | Description | Required |
