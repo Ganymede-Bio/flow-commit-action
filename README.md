@@ -8,6 +8,10 @@ This action is used as part of Ganymede's Self-Managed Repo feature. Self-manage
 
 This action automates the process of detecting changes in your Ganymede environment directories and committing those changes to the corresponding Ganymede environment. It handles file change detection, base64 encoding, and API communication with Ganymede. If using this action in a push event then the committer email address is used in the API request. This must make an email address of an existing Ganymede user. if using this action in a workflow dispatch than an author_email must be set in the action.
 
+## Requirements
+
+The runner must have `curl`, `base64`, and `jq` available. GitHub-hosted Ubuntu runners include these by default; on a minimal self-hosted runner, install `jq` (e.g. `apt-get install -y jq`) before using this action.
+
 ## Inputs
 
 | Input | Description | Required |
@@ -17,12 +21,14 @@ This action automates the process of detecting changes in your Ganymede environm
 | `ganymede_subdomain` | The Ganymede subdomain where the environment is located. If your Ganymede URL is mycompany.ganymede.bio, this would be mycompany | Yes |
 | `ganymede_api_token` | API token for authenticating with Ganymede. | Yes |
 | `author_email` | Email of the author for the commit. Required for workflow_dispatch events. | No |
+| `base_sha` | The Ganymede HEAD SHA the local files are based on — the `head_sha` output of `flow-pull-action`, persisted at pull time (e.g. in `.ganymede-sha`). Sent to the API so a push based on a stale HEAD is rejected with a 409 (conflict) instead of silently overwriting newer changes. | Yes |
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
 | `files-committed` | List of files committed to Ganymede. |
+| `commit-sha` | SHA of the commit created in Ganymede. |
 
 ## Usage
 
@@ -55,6 +61,21 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment || 'dev' }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Read Ganymede HEAD SHA
+        # base_sha is required. Read the value flow-pull-action persisted at
+        # pull time (see that action's README) so the push is conflict-checked.
+        id: read-sha
+        run: |
+          if [ -f .ganymede-sha ]; then
+            echo "BASE_SHA=$(cat .ganymede-sha)" >> $GITHUB_OUTPUT
+          else
+            echo "Error: .ganymede-sha not found. Run the Pull from Ganymede workflow first."
+            exit 1
+          fi
+
       - name: Commit flow changes to Ganymede
         uses: ganymede/flow-commit-action@v1
         with:
@@ -63,4 +84,5 @@ jobs:
           ganymede_subdomain: ${{ vars.GANYMEDE_SUBDOMAIN }}
           ganymede_api_token: ${{ secrets.GANYMEDE_API_TOKEN }}
           author_email: ${{ inputs.authorEmail }}
+          base_sha: ${{ steps.read-sha.outputs.BASE_SHA }}
 ```

@@ -16,10 +16,16 @@ inputs:
   author_email:
     description: 'Email of the author for the commit. Required for workflow_dispatch events.'
     required: false
+  base_sha:
+    description: 'The HEAD SHA recorded when the repo was last pulled (from flow-pull-action head_sha output). The server rejects the push with 409 if the branch has advanced since this SHA was recorded.'
+    required: true
 outputs:
   files-committed:
     description: "Files committed to Ganymede"
     value: ${{ steps.changed-files.outputs.ENV_CHANGED_FILES }}
+  commit-sha:
+    description: "SHA of the commit pushed to Ganymede"
+    value: ${{ steps.send-to-api.outputs.COMMIT_SHA }}
 runs:
   using: "composite"
   steps:
@@ -28,32 +34,40 @@ runs:
       with:
         fetch-depth: 0  # To be able to get the changes between the last two commits
 
+    # Inputs and event metadata are passed through `env:` and referenced as
+    # shell variables (never interpolated as ${{ }} inside run:), so a crafted
+    # value (e.g. a commit message or base_sha containing `$(...)`) cannot be
+    # executed on the runner.
     - name: Get changed files
       id: changed-files
       shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        EVENT_NAME: ${{ github.event_name }}
+        EVENT_BEFORE: ${{ github.event.before }}
+        EVENT_AFTER: ${{ github.event.after }}
       run: |
-        # Check for changes in each environment directory
-        echo "Checking changes in ${{ inputs.environment }} directory..."
-        # Get changed files in this environment directory
-          
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+        # Check for changes in the environment directory
+        echo "Checking changes in $ENVIRONMENT directory..."
+
+        if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             # Find the most recent sync commit from Ganymede
             LAST_SYNC_COMMIT=$(git log --grep="Sync flows in environment" --format="%H" -1 || echo "")
 
             if [ -n "$LAST_SYNC_COMMIT" ]; then
                 # Deploy only files changed since last Ganymede sync
-                ENV_CHANGED_FILES=$(git diff --name-only "$LAST_SYNC_COMMIT" HEAD -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+                ENV_CHANGED_FILES=$(git diff --name-only "$LAST_SYNC_COMMIT" HEAD -- "$ENVIRONMENT/" | grep -v '^$' || echo "")
             else
                 # Fallback: if no sync commit found, deploy all files (first deployment)
-                ENV_CHANGED_FILES=$(git ls-files "${{ inputs.environment }}/" | grep -v '^$' || echo "")
+                ENV_CHANGED_FILES=$(git ls-files "$ENVIRONMENT/" | grep -v '^$' || echo "")
             fi
-          else
+        else
             # For push events, compare before and after commit
-            ENV_CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- "${{ inputs.environment }}/" | grep -v '^$' || echo "")
-          fi
+            ENV_CHANGED_FILES=$(git diff --name-only "$EVENT_BEFORE" "$EVENT_AFTER" -- "$ENVIRONMENT/" | grep -v '^$' || echo "")
+        fi
 
         if [ -n "$ENV_CHANGED_FILES" ]; then
-            echo "Changed files in ${{ inputs.environment }} directory: $ENV_CHANGED_FILES"
+            echo "Changed files in $ENVIRONMENT directory: $ENV_CHANGED_FILES"
             # Use heredoc syntax to preserve newlines in GitHub Actions output
             # This ensures git diff's newline-separated file list remains intact
             # so readarray can properly split files in the next step
@@ -62,67 +76,103 @@ runs:
               echo "$ENV_CHANGED_FILES"
               echo "EOF"
             } >> $GITHUB_OUTPUT
-          else 
-            echo "No changes detected in ${{ inputs.environment }} directory."
+        else
+            echo "No changes detected in $ENVIRONMENT directory."
             echo "ENV_CHANGED_FILES=" >> $GITHUB_OUTPUT
         fi
-        
 
     - name: Prepare file map with base64 encoding
       id: prepare-file-map
       if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
       shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        CHANGED_FILES: ${{ steps.changed-files.outputs.ENV_CHANGED_FILES }}
       run: |
-        echo "Building file map for ${{ inputs.environment }} environment."
-        
+        echo "Building file map for $ENVIRONMENT environment."
+
         FILE_MAP="{}"
 
-        readarray -t files <<< "${{ steps.changed-files.outputs.ENV_CHANGED_FILES }}"
+        readarray -t files <<< "$CHANGED_FILES"
         for file in "${files[@]}"; do
             if [ -f "$file" ]; then
-            # Read base64-encoded content
-            CONTENT=$(base64 -i "$file" | tr -d '\n')
+              # Read base64-encoded content
+              CONTENT=$(base64 -i "$file" | tr -d '\n')
 
-            # Remove the environment prefix
-            TRIMMED_FILENAME=$(echo "$file" | sed "s|^${{ inputs.environment }}/||")
+              # Remove the environment prefix
+              TRIMMED_FILENAME=${file#"$ENVIRONMENT/"}
 
-            # Safely add to the JSON object using jq
-            FILE_MAP=$(jq --arg key "$TRIMMED_FILENAME" --arg val "$CONTENT" \
-                '. + {($key): $val}' <<< "$FILE_MAP")
+              # Safely add to the JSON object using jq
+              FILE_MAP=$(jq --arg key "$TRIMMED_FILENAME" --arg val "$CONTENT" \
+                  '. + {($key): $val}' <<< "$FILE_MAP")
             fi
         done
 
         echo "$FILE_MAP" > file_map.json
-        echo "File map created"  
+        echo "File map created"
 
     - name: Send to API
+      id: send-to-api
       shell: bash
       if: steps.changed-files.outputs.ENV_CHANGED_FILES != ''
+      env:
+        BASE_SHA: ${{ inputs.base_sha }}
+        AUTHOR_EMAIL: ${{ github.event.head_commit.author.email || inputs.author_email }}
+        COMMIT_MESSAGE: ${{ github.event.head_commit.message || 'Automated commit' }}
+        GANYMEDE_API_TOKEN: ${{ inputs.ganymede_api_token }}
+        GANYMEDE_SUBDOMAIN: ${{ inputs.ganymede_subdomain }}
+        GANYMEDE_ENVIRONMENT: ${{ inputs.ganymede_environment }}
       run: |
-        # Create the payload with file map and commit details
-          jq -n \
+        # Fail loudly if base_sha was not wired up — GitHub does not enforce
+        # required:true for composite action inputs at runtime.
+        if [ -z "$BASE_SHA" ]; then
+          echo "Error: base_sha is required. Pass the head_sha output from flow-pull-action."
+          exit 1
+        fi
+        # base_sha is interpolated into the request URL/body, so validate it is a
+        # git object SHA (hex, 7-64 chars) and nothing else.
+        if ! printf '%s' "$BASE_SHA" | grep -Eq '^[0-9a-f]{7,64}$'; then
+          echo "Error: base_sha is not a valid git SHA."
+          exit 1
+        fi
+
+        # Create the payload with file map, commit details, and baseSha for conflict detection
+        jq -n \
           --slurpfile fileMap file_map.json \
-          --arg authorEmail "${{ github.event.head_commit.author.email || inputs.author_email }}" \
-          --arg message "${{ github.event.head_commit.message || 'Automated commit'}}" \
-          '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message}' > payload.json
+          --arg authorEmail "$AUTHOR_EMAIL" \
+          --arg message "$COMMIT_MESSAGE" \
+          --arg baseSha "$BASE_SHA" \
+          '{fileMap: $fileMap[0], authorEmail: $authorEmail, message: $message, baseSha: $baseSha}' > payload.json
 
-          # Make the API request with the file map and capture both status code and response body
-          response_file=$(mktemp)
-          response_code=$(curl -X PUT \
-              -H "Content-Type: application/json" \
-              -H "api-key: ${{ inputs.ganymede_api_token }}" \
-              -d @payload.json \
-              https://${{ inputs.ganymede_subdomain }}.ganymede.bio/v0/environment/${{ inputs.ganymede_environment }}/commits \
-              -w "%{http_code}" -o "$response_file")
+        # Make the API request and capture both status code and response body
+        response_file=$(mktemp)
+        response_code=$(curl -X PUT \
+            -H "Content-Type: application/json" \
+            -H "api-key: $GANYMEDE_API_TOKEN" \
+            -d @payload.json \
+            "https://$GANYMEDE_SUBDOMAIN.ganymede.bio/v2/environment/$GANYMEDE_ENVIRONMENT/commits" \
+            -w "%{http_code}" -o "$response_file")
 
-          if [[ "$response_code" != 2* ]]; then
-              echo "Request failed with response code $response_code"
-              echo "Error response body:"
-              cat "$response_file"
-              rm "$response_file"
-              rm payload.json
-              exit 1
-          fi
+        if [ "$response_code" = "409" ]; then
+          current_head=$(jq -r '.currentHeadSha // "unknown"' "$response_file" 2>/dev/null)
+          echo "Conflict: the branch has been updated since this workflow started."
+          echo "Expected HEAD : $BASE_SHA"
+          echo "Current HEAD  : $current_head"
+          echo "Re-run this workflow to retry against the latest commit."
+          rm "$response_file" payload.json
+          exit 1
+        fi
 
-          rm "$response_file"
-          rm payload.json
+        if [[ "$response_code" != 2* ]]; then
+            echo "Request failed with response code $response_code"
+            echo "Error response body:"
+            cat "$response_file"
+            rm "$response_file"
+            rm payload.json
+            exit 1
+        fi
+
+        COMMIT_SHA=$(jq -r '.commitSha // ""' "$response_file" 2>/dev/null)
+        echo "COMMIT_SHA=$COMMIT_SHA" >> $GITHUB_OUTPUT
+        rm "$response_file"
+        rm payload.json
