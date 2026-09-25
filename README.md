@@ -28,7 +28,7 @@ The runner must have `curl`, `base64`, and `jq` available. GitHub-hosted Ubuntu 
 | Output | Description |
 |--------|-------------|
 | `files-committed` | List of files committed to Ganymede. |
-| `commit-sha` | SHA of the commit created in Ganymede. |
+| `commit-sha` | SHA of the commit created in Ganymede. Write this back to the recorded-HEAD file (see [Usage](#usage)) so the next deploy is not rejected as stale. Empty when the deploy was a no-op. |
 
 ## Usage
 
@@ -77,6 +77,7 @@ jobs:
           fi
 
       - name: Commit flow changes to Ganymede
+        id: ganymede-commit
         uses: ganymede/flow-commit-action@v1
         with:
           environment: ${{ inputs.environment || 'dev' }}
@@ -85,4 +86,21 @@ jobs:
           ganymede_api_token: ${{ secrets.GANYMEDE_API_TOKEN }}
           author_email: ${{ inputs.authorEmail }}
           base_sha: ${{ steps.read-sha.outputs.BASE_SHA }}
+
+      # A successful commit advances Ganymede's HEAD, so the recorded SHA is now
+      # stale. Without this step the *next* deploy sends the old base_sha and is
+      # rejected with a 409 until someone runs a pull and merges the sync PR.
+      - name: Record new Ganymede HEAD SHA
+        if: steps.ganymede-commit.outputs.commit-sha != ''
+        env:
+          COMMIT_SHA: ${{ steps.ganymede-commit.outputs.commit-sha }}
+        run: |
+          printf '%s\n' "$COMMIT_SHA" > .ganymede-sha
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ganymede-sha
+          git commit -m "chore: record Ganymede HEAD $COMMIT_SHA"
+          git push origin "HEAD:$GITHUB_REF_NAME"
 ```
+
+The write-back step needs `permissions: contents: write` on the job.
